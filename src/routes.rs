@@ -6,9 +6,9 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::Html;
 use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
-use rusqlite::Connection;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use sqlx::PgPool;
 
 use crate::auth;
 use crate::captcha;
@@ -55,8 +55,6 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/contributions/{id}/confirm", put(confirm_contribution_handler))
         .with_state(state)
 }
-
-// ── helpers ──
 
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -118,34 +116,34 @@ fn days_remaining(deadline: &str) -> i64 {
     }
 }
 
-fn is_admin_session(conn: &Connection, state: &AppState, headers: &HeaderMap) -> bool {
+async fn is_admin_session(pool: &PgPool, state: &AppState, headers: &HeaderMap) -> bool {
     let Some(uid) = auth::extract_user_id(headers, &state.jwt_secret) else {
         return false;
     };
-    users::is_admin(conn, &uid).unwrap_or(false)
+    users::is_admin(pool, &uid).await.unwrap_or(false)
 }
 
-fn require_admin(
-    conn: &Connection,
+async fn require_admin(
+    pool: &PgPool,
     state: &AppState,
     headers: &HeaderMap,
 ) -> Result<(), (StatusCode, String)> {
-    if is_admin_session(conn, state, headers) {
+    if is_admin_session(pool, state, headers).await {
         Ok(())
     } else {
         Err((StatusCode::UNAUTHORIZED, "admin required".into()))
     }
 }
 
-fn check_pot_access(
-    conn: &Connection,
+async fn check_pot_access(
+    pool: &PgPool,
     state: &AppState,
     headers: &HeaderMap,
     pot: &db::Pot,
 ) -> Result<(), (StatusCode, String)> {
     let user_id = auth::extract_user_id(headers, &state.jwt_secret)
         .ok_or((StatusCode::UNAUTHORIZED, "login required".into()))?;
-    if users::is_admin(conn, &user_id).unwrap_or(false) {
+    if users::is_admin(pool, &user_id).await.unwrap_or(false) {
         return Ok(());
     }
     if pot.owner_id.as_deref() == Some(user_id.as_str()) {
@@ -155,11 +153,12 @@ fn check_pot_access(
     }
 }
 
-fn nav_html(state: &AppState, headers: &HeaderMap) -> String {
-    let user = auth::extract_user_id(headers, &state.jwt_secret).and_then(|uid| {
-        let conn = state.db.lock().unwrap();
-        users::get_user_by_id(&conn, &uid).ok().flatten()
-    });
+async fn nav_html(state: &AppState, headers: &HeaderMap) -> String {
+    let user = if let Some(uid) = auth::extract_user_id(headers, &state.jwt_secret) {
+        users::get_user_by_id(&state.pool, &uid).await.ok().flatten()
+    } else {
+        None
+    };
     let admin = user.as_ref().map_or(false, |u| u.is_admin);
     let mut links = Vec::new();
     links.push(r#"<a href="/" class="nav__link">Accueil</a>"#.to_string());
@@ -201,10 +200,8 @@ async fn index_page(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Html<String>, (StatusCode, String)> {
-    let pots = {
-        let conn = state.db.lock().unwrap();
-        db::list_pots(&conn).map_err(internal)?
-    };
+    let pots = db::list_pots(&state.pool).await.map_err(internal)?;
+    let nav = nav_html(&state, &headers).await;
 
     let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let mut cards = String::new();
@@ -237,7 +234,7 @@ async fn index_page(
     }
 
     let html = INDEX_TEMPLATE
-        .replace("{{nav}}", &nav_html(&state, &headers))
+        .replace("{{nav}}", &nav)
         .replace("{{pot_cards}}", &cards);
     Ok(Html(html))
 }
@@ -246,33 +243,30 @@ async fn login_page(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Html<String> {
-    Html(LOGIN_TEMPLATE.replace("{{nav}}", &nav_html(&state, &headers)))
+    let nav = nav_html(&state, &headers).await;
+    Html(LOGIN_TEMPLATE.replace("{{nav}}", &nav))
 }
 
 async fn signup_page(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Html<String> {
-    Html(SIGNUP_TEMPLATE.replace("{{nav}}", &nav_html(&state, &headers)))
+    let nav = nav_html(&state, &headers).await;
+    Html(SIGNUP_TEMPLATE.replace("{{nav}}", &nav))
 }
 
 async fn profile_page(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<axum::response::Response, (StatusCode, String)> {
-    let user_id = auth::require_user(&headers, &state.jwt_secret);
-    if user_id.is_err() {
+    let Some(user_id) = auth::extract_user_id(&headers, &state.jwt_secret) else {
         return Ok(redirect_to("/login"));
-    }
-    let user_id = user_id.unwrap();
-    let user = {
-        let conn = state.db.lock().unwrap();
-        users::get_user_by_id(&conn, &user_id).map_err(internal)?
     };
-    let user = user.ok_or(not_found())?;
+    let user = users::get_user_by_id(&state.pool, &user_id).await.map_err(internal)?.ok_or(not_found())?;
+    let nav = nav_html(&state, &headers).await;
 
     let html = PROFILE_TEMPLATE
-        .replace("{{nav}}", &nav_html(&state, &headers))
+        .replace("{{nav}}", &nav)
         .replace("{{name}}", &html_escape(&user.name))
         .replace("{{email}}", &html_escape(&user.email));
 
@@ -292,18 +286,13 @@ async fn dashboard_page(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<axum::response::Response, (StatusCode, String)> {
-    let user_id = match auth::extract_user_id(&headers, &state.jwt_secret) {
-        Some(uid) => uid,
-        None => return Ok(redirect_to("/login")),
+    let Some(user_id) = auth::extract_user_id(&headers, &state.jwt_secret) else {
+        return Ok(redirect_to("/login"));
     };
-
-    let (user, pots, contribs) = {
-        let conn = state.db.lock().unwrap();
-        let user = users::get_user_by_id(&conn, &user_id).map_err(internal)?.ok_or(not_found())?;
-        let pots = db::list_pots_by_owner(&conn, &user_id).map_err(internal)?;
-        let contribs = db::list_contributions_by_user(&conn, &user_id).map_err(internal)?;
-        (user, pots, contribs)
-    };
+    let user = users::get_user_by_id(&state.pool, &user_id).await.map_err(internal)?.ok_or(not_found())?;
+    let pots = db::list_pots_by_owner(&state.pool, &user_id).await.map_err(internal)?;
+    let contribs = db::list_contributions_by_user(&state.pool, &user_id).await.map_err(internal)?;
+    let nav = nav_html(&state, &headers).await;
 
     let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let mut pot_rows = String::new();
@@ -364,7 +353,7 @@ async fn dashboard_page(
     }
 
     let html = DASHBOARD_TEMPLATE
-        .replace("{{nav}}", &nav_html(&state, &headers))
+        .replace("{{nav}}", &nav)
         .replace("{{user_name}}", &html_escape(if !user.name.is_empty() { &user.name } else { &user.email }))
         .replace("{{pot_count}}", &format!("{}", pots.len()))
         .replace("{{contrib_count}}", &format!("{}", contribs.len()))
@@ -381,12 +370,9 @@ async fn pot_page(
     Path(slug): Path<String>,
     headers: HeaderMap,
 ) -> Result<Html<String>, (StatusCode, String)> {
-    let (pot, contributions) = {
-        let conn = state.db.lock().unwrap();
-        let pot = db::get_pot_by_slug(&conn, &slug).map_err(internal)?.ok_or_else(not_found)?;
-        let contributions = db::get_contributions(&conn, &pot.id).map_err(internal)?;
-        (pot, contributions)
-    };
+    let pot = db::get_pot_by_slug(&state.pool, &slug).await.map_err(internal)?.ok_or_else(not_found)?;
+    let contributions = db::get_contributions(&state.pool, &pot.id).await.map_err(internal)?;
+    let nav = nav_html(&state, &headers).await;
 
     let total_cents: i64 = contributions.iter().map(|c| c.amount_cents).sum();
     let pct = if pot.goal_cents > 0 { total_cents * 100 / pot.goal_cents } else { 0 };
@@ -487,7 +473,7 @@ async fn pot_page(
     let time_sep = if !time_info.is_empty() && contributor_count > 0 { " · " } else { "" };
 
     let html = POT_TEMPLATE
-        .replace("{{nav}}", &nav_html(&state, &headers))
+        .replace("{{nav}}", &nav)
         .replace("{{title}}", &html_escape(&pot.title))
         .replace("{{organizer}}", &html_escape(&pot.organizer))
         .replace("{{description}}", &html_escape(&pot.description).replace('\n', "<br>"))
@@ -514,13 +500,10 @@ async fn admin_page(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<axum::response::Response, (StatusCode, String)> {
-    let (pot, contributions) = {
-        let conn = state.db.lock().unwrap();
-        let pot = db::get_pot_by_id(&conn, &id).map_err(internal)?.ok_or_else(not_found)?;
-        check_pot_access(&conn, &state, &headers, &pot)?;
-        let contributions = db::get_contributions(&conn, &pot.id).map_err(internal)?;
-        (pot, contributions)
-    };
+    let pot = db::get_pot_by_id(&state.pool, &id).await.map_err(internal)?.ok_or_else(not_found)?;
+    check_pot_access(&state.pool, &state, &headers, &pot).await?;
+    let contributions = db::get_contributions(&state.pool, &pot.id).await.map_err(internal)?;
+    let nav = nav_html(&state, &headers).await;
 
     let total_cents: i64 = contributions.iter().map(|c| c.amount_cents).sum();
     let pct = if pot.goal_cents > 0 { total_cents * 100 / pot.goal_cents } else { 0 };
@@ -559,7 +542,7 @@ async fn admin_page(
     let closed_label = if closed { "Fermée" } else { "Ouverte" };
 
     let html = ADMIN_TEMPLATE
-        .replace("{{nav}}", &nav_html(&state, &headers))
+        .replace("{{nav}}", &nav)
         .replace("{{title}}", &html_escape(&pot.title))
         .replace("{{organizer}}", &html_escape(&pot.organizer))
         .replace("{{description}}", &html_escape(&pot.description))
@@ -593,13 +576,10 @@ async fn admin_dashboard_page(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<axum::response::Response, (StatusCode, String)> {
-    let (pots, all_users) = {
-        let conn = state.db.lock().unwrap();
-        require_admin(&conn, &state, &headers)?;
-        let pots = db::list_pots(&conn).map_err(internal)?;
-        let all_users = users::list_users(&conn).map_err(internal)?;
-        (pots, all_users)
-    };
+    require_admin(&state.pool, &state, &headers).await?;
+    let pots = db::list_pots(&state.pool).await.map_err(internal)?;
+    let all_users = users::list_users(&state.pool).await.map_err(internal)?;
+    let nav = nav_html(&state, &headers).await;
 
     let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let mut rows = String::new();
@@ -672,7 +652,7 @@ async fn admin_dashboard_page(
     }
 
     let html = ADMIN_DASHBOARD_TEMPLATE
-        .replace("{{nav}}", &nav_html(&state, &headers))
+        .replace("{{nav}}", &nav)
         .replace("{{rows}}", &rows)
         .replace("{{pot_count}}", &format!("{}", pots.len()))
         .replace("{{user_count}}", &format!("{}", all_users.len()))
@@ -723,17 +703,14 @@ async fn api_signup(
     let hash = users::hash_password(&body.password).map_err(internal)?;
     let user_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
 
-    {
-        let conn = state.db.lock().unwrap();
-        if users::email_exists(&conn, &email).map_err(internal)? {
-            return Err((StatusCode::CONFLICT, "email already registered".into()));
-        }
-        let is_first = users::count_users(&conn).map_err(internal)? == 0;
-        users::create_user(&conn, &user_id, &email, &hash, &name).map_err(internal)?;
-        if is_first {
-            users::set_admin(&conn, &user_id, true).map_err(internal)?;
-            tracing::info!("first user {} promoted to admin", email);
-        }
+    if users::email_exists(&state.pool, &email).await.map_err(internal)? {
+        return Err((StatusCode::CONFLICT, "email already registered".into()));
+    }
+    let is_first = users::count_users(&state.pool).await.map_err(internal)? == 0;
+    users::create_user(&state.pool, &user_id, &email, &hash, &name).await.map_err(internal)?;
+    if is_first {
+        users::set_admin(&state.pool, &user_id, true).await.map_err(internal)?;
+        tracing::info!("first user {} promoted to admin", email);
     }
 
     let token = session::issue_token(&state.jwt_secret, &user_id).map_err(internal)?;
@@ -758,10 +735,7 @@ async fn api_login(
         return Err((StatusCode::BAD_REQUEST, "invalid captcha".into()));
     }
     let email = body.email.trim().to_lowercase();
-    let pair = {
-        let conn = state.db.lock().unwrap();
-        users::get_user_with_hash_by_email(&conn, &email).map_err(internal)?
-    };
+    let pair = users::get_user_with_hash_by_email(&state.pool, &email).await.map_err(internal)?;
     let (user, stored_hash) = pair.ok_or((StatusCode::UNAUTHORIZED, "invalid credentials".into()))?;
     if !users::verify_password(&body.password, &stored_hash) {
         return Err((StatusCode::UNAUTHORIZED, "invalid credentials".into()));
@@ -777,7 +751,7 @@ async fn api_logout() -> axum::response::Response {
     let mut resp = axum::response::Response::new(json!({"ok": true}).to_string().into());
     resp.headers_mut().insert("content-type", "application/json".parse().unwrap());
     resp.headers_mut().append("set-cookie", clear_session_cookie().parse().unwrap());
-    resp.headers_mut().append("set-cookie", "admin_token=; Path=/; SameSite=Strict; Max-Age=0".parse().unwrap()); // legacy cookie cleanup
+    resp.headers_mut().append("set-cookie", "admin_token=; Path=/; SameSite=Strict; Max-Age=0".parse().unwrap());
     resp
 }
 
@@ -797,8 +771,7 @@ async fn api_update_me(
     if email.is_empty() || !email.contains('@') {
         return Err((StatusCode::BAD_REQUEST, "invalid email".into()));
     }
-    let conn = state.db.lock().unwrap();
-    users::update_user(&conn, &user_id, &email, body.name.trim()).map_err(internal)?;
+    users::update_user(&state.pool, &user_id, &email, body.name.trim()).await.map_err(internal)?;
     Ok(Json(json!({"ok": true})))
 }
 
@@ -817,19 +790,13 @@ async fn api_update_password(
     if body.new_password.len() < 8 {
         return Err((StatusCode::BAD_REQUEST, "password must be at least 8 characters".into()));
     }
-    let stored = {
-        let conn = state.db.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT password_hash FROM users WHERE id = ?1").map_err(|e| internal(e.into()))?;
-        let mut rows = stmt.query_map([&user_id], |row| row.get::<_, String>(0)).map_err(|e| internal(e.into()))?;
-        rows.next().transpose().map_err(|e| internal(e.into()))?
-    };
+    let stored = users::get_password_hash(&state.pool, &user_id).await.map_err(internal)?;
     let stored = stored.ok_or((StatusCode::UNAUTHORIZED, "user not found".into()))?;
     if !users::verify_password(&body.current_password, &stored) {
         return Err((StatusCode::UNAUTHORIZED, "current password incorrect".into()));
     }
     let new_hash = users::hash_password(&body.new_password).map_err(internal)?;
-    let conn = state.db.lock().unwrap();
-    users::update_password(&conn, &user_id, &new_hash).map_err(internal)?;
+    users::update_password(&state.pool, &user_id, &new_hash).await.map_err(internal)?;
     Ok(Json(json!({"ok": true})))
 }
 
@@ -838,9 +805,8 @@ async fn api_promote_user(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let conn = state.db.lock().unwrap();
-    require_admin(&conn, &state, &headers)?;
-    users::set_admin(&conn, &id, true).map_err(internal)?;
+    require_admin(&state.pool, &state, &headers).await?;
+    users::set_admin(&state.pool, &id, true).await.map_err(internal)?;
     Ok(Json(json!({"ok": true, "is_admin": true})))
 }
 
@@ -849,9 +815,8 @@ async fn api_demote_user(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let conn = state.db.lock().unwrap();
-    require_admin(&conn, &state, &headers)?;
-    users::set_admin(&conn, &id, false).map_err(internal)?;
+    require_admin(&state.pool, &state, &headers).await?;
+    users::set_admin(&state.pool, &id, false).await.map_err(internal)?;
     Ok(Json(json!({"ok": true, "is_admin": false})))
 }
 
@@ -893,16 +858,15 @@ async fn create_pot(
 
     let owner_id = Some(user_id.as_str());
 
-    let conn = state.db.lock().unwrap();
     let mut slug = base_slug.clone();
     let mut suffix = 2;
-    while db::slug_exists(&conn, &slug).map_err(internal)? {
+    while db::slug_exists(&state.pool, &slug).await.map_err(internal)? {
         slug = format!("{}-{}", &base_slug.chars().take(46).collect::<String>(), suffix);
         suffix += 1;
     }
 
     db::create_pot(
-        &conn,
+        &state.pool,
         &id,
         &slug,
         body.title.trim(),
@@ -917,6 +881,7 @@ async fn create_pot(
         body.show_names.unwrap_or(true),
         owner_id,
     )
+    .await
     .map_err(internal)?;
 
     Ok(Json(json!({
@@ -946,11 +911,10 @@ async fn update_pot_handler(
     Path(id): Path<String>,
     Json(body): Json<UpdatePotRequest>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let conn = state.db.lock().unwrap();
-    let pot = db::get_pot_by_id(&conn, &id).map_err(internal)?.ok_or_else(not_found)?;
-    check_pot_access(&conn, &state, &headers, &pot)?;
+    let pot = db::get_pot_by_id(&state.pool, &id).await.map_err(internal)?.ok_or_else(not_found)?;
+    check_pot_access(&state.pool, &state, &headers, &pot).await?;
     db::update_pot(
-        &conn,
+        &state.pool,
         &id,
         body.title.trim(),
         body.description.as_deref().unwrap_or(""),
@@ -962,6 +926,7 @@ async fn update_pot_handler(
         body.show_amounts.unwrap_or(true),
         body.show_names.unwrap_or(true),
     )
+    .await
     .map_err(internal)?;
     Ok(Json(json!({"ok": true})))
 }
@@ -971,10 +936,9 @@ async fn delete_pot_handler(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let conn = state.db.lock().unwrap();
-    let pot = db::get_pot_by_id(&conn, &id).map_err(internal)?.ok_or_else(not_found)?;
-    check_pot_access(&conn, &state, &headers, &pot)?;
-    db::delete_pot(&conn, &id).map_err(internal)?;
+    let pot = db::get_pot_by_id(&state.pool, &id).await.map_err(internal)?.ok_or_else(not_found)?;
+    check_pot_access(&state.pool, &state, &headers, &pot).await?;
+    db::delete_pot(&state.pool, &id).await.map_err(internal)?;
     Ok(Json(json!({"ok": true})))
 }
 
@@ -983,10 +947,9 @@ async fn close_pot(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let conn = state.db.lock().unwrap();
-    let pot = db::get_pot_by_id(&conn, &id).map_err(internal)?.ok_or_else(not_found)?;
-    check_pot_access(&conn, &state, &headers, &pot)?;
-    let closed = db::toggle_close(&conn, &id).map_err(internal)?;
+    let pot = db::get_pot_by_id(&state.pool, &id).await.map_err(internal)?.ok_or_else(not_found)?;
+    check_pot_access(&state.pool, &state, &headers, &pot).await?;
+    let closed = db::toggle_close(&state.pool, &id).await.map_err(internal)?;
     Ok(Json(json!({"ok": true, "closed": closed})))
 }
 
@@ -1023,8 +986,7 @@ async fn contribute(
 
     let user_id = auth::extract_user_id(&headers, &state.jwt_secret);
 
-    let conn = state.db.lock().unwrap();
-    let pot = db::get_pot_by_slug(&conn, &slug).map_err(internal)?.ok_or_else(not_found)?;
+    let pot = db::get_pot_by_slug(&state.pool, &slug).await.map_err(internal)?.ok_or_else(not_found)?;
 
     if is_closed(&pot) {
         return Err((StatusCode::BAD_REQUEST, "Cette cagnotte est terminée.".into()));
@@ -1038,7 +1000,8 @@ async fn contribute(
     let name = body.name.as_deref().map(|n| n.trim()).filter(|n| !n.is_empty());
     let message = body.message.as_deref().map(|m| m.trim()).filter(|m| !m.is_empty());
 
-    db::create_contribution(&conn, &contrib_id, &pot.id, name, body.amount_cents, message, user_id.as_deref())
+    db::create_contribution(&state.pool, &contrib_id, &pot.id, name, body.amount_cents, message, user_id.as_deref())
+        .await
         .map_err(internal)?;
 
     Ok(Json(json!({"ok": true, "id": contrib_id})))
@@ -1049,11 +1012,10 @@ async fn delete_contribution_handler(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let conn = state.db.lock().unwrap();
-    let pot_id = db::get_contribution_pot_id(&conn, &id).map_err(internal)?.ok_or_else(not_found)?;
-    let pot = db::get_pot_by_id(&conn, &pot_id).map_err(internal)?.ok_or_else(not_found)?;
-    check_pot_access(&conn, &state, &headers, &pot)?;
-    db::delete_contribution(&conn, &id).map_err(internal)?;
+    let pot_id = db::get_contribution_pot_id(&state.pool, &id).await.map_err(internal)?.ok_or_else(not_found)?;
+    let pot = db::get_pot_by_id(&state.pool, &pot_id).await.map_err(internal)?.ok_or_else(not_found)?;
+    check_pot_access(&state.pool, &state, &headers, &pot).await?;
+    db::delete_contribution(&state.pool, &id).await.map_err(internal)?;
     Ok(Json(json!({"ok": true})))
 }
 
@@ -1062,11 +1024,10 @@ async fn confirm_contribution_handler(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
-    let conn = state.db.lock().unwrap();
-    let pot_id = db::get_contribution_pot_id(&conn, &id).map_err(internal)?.ok_or_else(not_found)?;
-    let pot = db::get_pot_by_id(&conn, &pot_id).map_err(internal)?.ok_or_else(not_found)?;
-    check_pot_access(&conn, &state, &headers, &pot)?;
-    db::confirm_contribution(&conn, &id).map_err(internal)?;
+    let pot_id = db::get_contribution_pot_id(&state.pool, &id).await.map_err(internal)?.ok_or_else(not_found)?;
+    let pot = db::get_pot_by_id(&state.pool, &pot_id).await.map_err(internal)?.ok_or_else(not_found)?;
+    check_pot_access(&state.pool, &state, &headers, &pot).await?;
+    db::confirm_contribution(&state.pool, &id).await.map_err(internal)?;
     Ok(Json(json!({"ok": true})))
 }
 
@@ -1075,10 +1036,9 @@ async fn export_csv(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<axum::response::Response, (StatusCode, String)> {
-    let conn = state.db.lock().unwrap();
-    let pot = db::get_pot_by_id(&conn, &id).map_err(internal)?.ok_or_else(not_found)?;
-    check_pot_access(&conn, &state, &headers, &pot)?;
-    let contributions = db::get_contributions(&conn, &id).map_err(internal)?;
+    let pot = db::get_pot_by_id(&state.pool, &id).await.map_err(internal)?.ok_or_else(not_found)?;
+    check_pot_access(&state.pool, &state, &headers, &pot).await?;
+    let contributions = db::get_contributions(&state.pool, &id).await.map_err(internal)?;
 
     let mut csv = String::from("nom,montant,message,date,confirmé\n");
     for c in &contributions {

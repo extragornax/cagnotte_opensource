@@ -1,6 +1,8 @@
 use anyhow::Context;
-use rusqlite::Connection;
+use sqlx::postgres::PgPoolOptions;
+use sqlx::{PgPool, Row};
 
+#[derive(sqlx::FromRow)]
 pub struct Pot {
     pub id: String,
     pub slug: String,
@@ -19,6 +21,7 @@ pub struct Pot {
     pub owner_id: Option<String>,
 }
 
+#[derive(sqlx::FromRow)]
 pub struct Contribution {
     pub id: String,
     pub pot_id: String,
@@ -53,67 +56,84 @@ pub struct ContributionWithPot {
     pub created_at: String,
 }
 
-pub fn init(path: &str) -> anyhow::Result<Connection> {
-    if let Some(parent) = std::path::Path::new(path).parent() {
-        std::fs::create_dir_all(parent).context("creating db directory")?;
-    }
-    let conn = Connection::open(path).context("opening database")?;
-    conn.execute_batch(
-        "PRAGMA journal_mode=WAL;
-         PRAGMA busy_timeout=5000;
-         PRAGMA foreign_keys=ON;",
-    )
-    .context("setting pragmas")?;
-    conn.execute_batch(
+pub fn now_str() -> String {
+    chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
+pub async fn connect(url: &str) -> anyhow::Result<PgPool> {
+    let pool = PgPoolOptions::new()
+        .max_connections(10)
+        .connect(url)
+        .await
+        .context("connecting to postgres")?;
+    init(&pool).await?;
+    Ok(pool)
+}
+
+pub async fn init(pool: &PgPool) -> anyhow::Result<()> {
+    sqlx::query(
         "CREATE TABLE IF NOT EXISTS users (
             id            TEXT PRIMARY KEY,
             email         TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL,
             name          TEXT NOT NULL DEFAULT '',
-            is_admin      INTEGER NOT NULL DEFAULT 0,
-            created_at    TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-        CREATE TABLE IF NOT EXISTS pots (
+            is_admin      BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at    TEXT NOT NULL
+        )",
+    )
+    .execute(pool)
+    .await
+    .context("create users")?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS pots (
             id              TEXT PRIMARY KEY,
             slug            TEXT NOT NULL UNIQUE,
             title           TEXT NOT NULL,
             description     TEXT NOT NULL DEFAULT '',
-            goal_cents      INTEGER NOT NULL,
+            goal_cents      BIGINT NOT NULL,
             currency        TEXT NOT NULL DEFAULT 'EUR',
             payment_info    TEXT NOT NULL DEFAULT '',
             organizer       TEXT NOT NULL DEFAULT '',
             deadline        TEXT,
-            allow_anonymous INTEGER NOT NULL DEFAULT 1,
-            show_amounts    INTEGER NOT NULL DEFAULT 1,
-            show_names      INTEGER NOT NULL DEFAULT 1,
-            closed          INTEGER NOT NULL DEFAULT 0,
-            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            allow_anonymous BOOLEAN NOT NULL DEFAULT TRUE,
+            show_amounts    BOOLEAN NOT NULL DEFAULT TRUE,
+            show_names      BOOLEAN NOT NULL DEFAULT TRUE,
+            closed          BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at      TEXT NOT NULL,
             owner_id        TEXT REFERENCES users(id) ON DELETE SET NULL
-        );
-        CREATE TABLE IF NOT EXISTS contributions (
+        )",
+    )
+    .execute(pool)
+    .await
+    .context("create pots")?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS contributions (
             id           TEXT PRIMARY KEY,
             pot_id       TEXT NOT NULL REFERENCES pots(id) ON DELETE CASCADE,
             name         TEXT,
-            amount_cents INTEGER NOT NULL,
+            amount_cents BIGINT NOT NULL,
             message      TEXT,
-            confirmed    INTEGER NOT NULL DEFAULT 0,
-            created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+            confirmed    BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at   TEXT NOT NULL,
             user_id      TEXT REFERENCES users(id) ON DELETE SET NULL
-        );
-        CREATE INDEX IF NOT EXISTS idx_contributions_pot ON contributions(pot_id, created_at);
-        CREATE INDEX IF NOT EXISTS idx_pots_owner ON pots(owner_id);
-        CREATE INDEX IF NOT EXISTS idx_contributions_user ON contributions(user_id);",
+        )",
     )
-    .context("creating tables")?;
-    let _ = conn.execute(
-        "ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0",
-        [],
-    );
-    Ok(conn)
+    .execute(pool)
+    .await
+    .context("create contributions")?;
+
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_contributions_pot ON contributions(pot_id, created_at)").execute(pool).await.ok();
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_pots_owner ON pots(owner_id)").execute(pool).await.ok();
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_contributions_user ON contributions(user_id)").execute(pool).await.ok();
+
+    Ok(())
 }
 
-pub fn create_pot(
-    conn: &Connection,
+#[allow(clippy::too_many_arguments)]
+pub async fn create_pot(
+    pool: &PgPool,
     id: &str,
     slug: &str,
     title: &str,
@@ -128,98 +148,128 @@ pub fn create_pot(
     show_names: bool,
     owner_id: Option<&str>,
 ) -> anyhow::Result<()> {
-    conn.execute(
-        "INSERT INTO pots (id, slug, title, description, goal_cents, currency, payment_info, organizer, deadline, allow_anonymous, show_amounts, show_names, owner_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-        rusqlite::params![id, slug, title, description, goal_cents, currency, payment_info, organizer, deadline, allow_anonymous, show_amounts, show_names, owner_id],
-    ).context("inserting pot")?;
+    sqlx::query(
+        "INSERT INTO pots (id, slug, title, description, goal_cents, currency, payment_info, organizer, deadline, allow_anonymous, show_amounts, show_names, created_at, owner_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
+    )
+    .bind(id)
+    .bind(slug)
+    .bind(title)
+    .bind(description)
+    .bind(goal_cents)
+    .bind(currency)
+    .bind(payment_info)
+    .bind(organizer)
+    .bind(deadline)
+    .bind(allow_anonymous)
+    .bind(show_amounts)
+    .bind(show_names)
+    .bind(now_str())
+    .bind(owner_id)
+    .execute(pool)
+    .await
+    .context("inserting pot")?;
     Ok(())
 }
 
-const POT_COLS: &str = "id, slug, title, description, goal_cents, currency, payment_info, organizer, deadline, allow_anonymous, show_amounts, show_names, closed, created_at, owner_id";
-
-pub fn get_pot_by_slug(conn: &Connection, slug: &str) -> anyhow::Result<Option<Pot>> {
-    let sql = format!("SELECT {POT_COLS} FROM pots WHERE slug = ?1");
-    let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query_map([slug], row_to_pot)?;
-    Ok(rows.next().transpose()?)
+pub async fn get_pot_by_slug(pool: &PgPool, slug: &str) -> anyhow::Result<Option<Pot>> {
+    let pot = sqlx::query_as::<_, Pot>(
+        "SELECT id, slug, title, description, goal_cents, currency, payment_info, organizer, deadline, allow_anonymous, show_amounts, show_names, closed, created_at, owner_id
+         FROM pots WHERE slug = $1",
+    )
+    .bind(slug)
+    .fetch_optional(pool)
+    .await?;
+    Ok(pot)
 }
 
-pub fn get_pot_by_id(conn: &Connection, id: &str) -> anyhow::Result<Option<Pot>> {
-    let sql = format!("SELECT {POT_COLS} FROM pots WHERE id = ?1");
-    let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query_map([id], row_to_pot)?;
-    Ok(rows.next().transpose()?)
+pub async fn get_pot_by_id(pool: &PgPool, id: &str) -> anyhow::Result<Option<Pot>> {
+    let pot = sqlx::query_as::<_, Pot>(
+        "SELECT id, slug, title, description, goal_cents, currency, payment_info, organizer, deadline, allow_anonymous, show_amounts, show_names, closed, created_at, owner_id
+         FROM pots WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(pot)
 }
 
-pub fn list_pots(conn: &Connection) -> anyhow::Result<Vec<PotSummary>> {
-    let mut stmt = conn.prepare(
-        "SELECT p.id, p.slug, p.title, p.goal_cents, p.closed, p.deadline, p.owner_id,
-                COALESCE(SUM(c.amount_cents), 0) AS total_cents,
-                COUNT(c.id) AS contributor_count
+async fn pot_summaries(pool: &PgPool, owner: Option<&str>) -> anyhow::Result<Vec<PotSummary>> {
+    let sql = match owner {
+        Some(_) => "SELECT p.id, p.slug, p.title, p.goal_cents, p.closed, p.deadline, p.owner_id,
+                COALESCE(SUM(c.amount_cents)::BIGINT, 0) AS total_cents,
+                COUNT(c.id)::BIGINT AS contributor_count
+         FROM pots p LEFT JOIN contributions c ON c.pot_id = p.id
+         WHERE p.owner_id = $1
+         GROUP BY p.id
+         ORDER BY p.closed ASC, p.created_at DESC",
+        None => "SELECT p.id, p.slug, p.title, p.goal_cents, p.closed, p.deadline, p.owner_id,
+                COALESCE(SUM(c.amount_cents)::BIGINT, 0) AS total_cents,
+                COUNT(c.id)::BIGINT AS contributor_count
          FROM pots p LEFT JOIN contributions c ON c.pot_id = p.id
          GROUP BY p.id
          ORDER BY p.closed ASC, p.created_at DESC",
-    )?;
-    let rows = stmt.query_map([], pot_summary_row)?;
-    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    };
+    let mut q = sqlx::query(sql);
+    if let Some(o) = owner {
+        q = q.bind(o);
+    }
+    let rows = q.fetch_all(pool).await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| PotSummary {
+            id: r.get("id"),
+            slug: r.get("slug"),
+            title: r.get("title"),
+            goal_cents: r.get("goal_cents"),
+            closed: r.get("closed"),
+            deadline: r.get("deadline"),
+            owner_id: r.get("owner_id"),
+            total_cents: r.get("total_cents"),
+            contributor_count: r.get("contributor_count"),
+        })
+        .collect())
 }
 
-pub fn list_pots_by_owner(conn: &Connection, owner_id: &str) -> anyhow::Result<Vec<PotSummary>> {
-    let mut stmt = conn.prepare(
-        "SELECT p.id, p.slug, p.title, p.goal_cents, p.closed, p.deadline, p.owner_id,
-                COALESCE(SUM(c.amount_cents), 0) AS total_cents,
-                COUNT(c.id) AS contributor_count
-         FROM pots p LEFT JOIN contributions c ON c.pot_id = p.id
-         WHERE p.owner_id = ?1
-         GROUP BY p.id
-         ORDER BY p.closed ASC, p.created_at DESC",
-    )?;
-    let rows = stmt.query_map([owner_id], pot_summary_row)?;
-    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+pub async fn list_pots(pool: &PgPool) -> anyhow::Result<Vec<PotSummary>> {
+    pot_summaries(pool, None).await
 }
 
-fn pot_summary_row(row: &rusqlite::Row) -> rusqlite::Result<PotSummary> {
-    Ok(PotSummary {
-        id: row.get(0)?,
-        slug: row.get(1)?,
-        title: row.get(2)?,
-        goal_cents: row.get(3)?,
-        closed: row.get::<_, i64>(4)? != 0,
-        deadline: row.get(5)?,
-        owner_id: row.get(6)?,
-        total_cents: row.get(7)?,
-        contributor_count: row.get(8)?,
-    })
+pub async fn list_pots_by_owner(pool: &PgPool, owner_id: &str) -> anyhow::Result<Vec<PotSummary>> {
+    pot_summaries(pool, Some(owner_id)).await
 }
 
-pub fn list_contributions_by_user(
-    conn: &Connection,
+pub async fn list_contributions_by_user(
+    pool: &PgPool,
     user_id: &str,
 ) -> anyhow::Result<Vec<ContributionWithPot>> {
-    let mut stmt = conn.prepare(
-        "SELECT c.id, c.pot_id, p.slug, p.title, c.amount_cents, c.message, c.confirmed, c.created_at
+    let rows = sqlx::query(
+        "SELECT c.id, c.pot_id, p.slug AS pot_slug, p.title AS pot_title, c.amount_cents, c.message, c.confirmed, c.created_at
          FROM contributions c JOIN pots p ON p.id = c.pot_id
-         WHERE c.user_id = ?1
+         WHERE c.user_id = $1
          ORDER BY c.created_at DESC",
-    )?;
-    let rows = stmt.query_map([user_id], |row| {
-        Ok(ContributionWithPot {
-            id: row.get(0)?,
-            pot_id: row.get(1)?,
-            pot_slug: row.get(2)?,
-            pot_title: row.get(3)?,
-            amount_cents: row.get(4)?,
-            message: row.get(5)?,
-            confirmed: row.get::<_, i64>(6)? != 0,
-            created_at: row.get(7)?,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| ContributionWithPot {
+            id: r.get("id"),
+            pot_id: r.get("pot_id"),
+            pot_slug: r.get("pot_slug"),
+            pot_title: r.get("pot_title"),
+            amount_cents: r.get("amount_cents"),
+            message: r.get("message"),
+            confirmed: r.get("confirmed"),
+            created_at: r.get("created_at"),
         })
-    })?;
-    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        .collect())
 }
 
-pub fn update_pot(
-    conn: &Connection,
+#[allow(clippy::too_many_arguments)]
+pub async fn update_pot(
+    pool: &PgPool,
     id: &str,
     title: &str,
     description: &str,
@@ -231,45 +281,62 @@ pub fn update_pot(
     show_amounts: bool,
     show_names: bool,
 ) -> anyhow::Result<()> {
-    conn.execute(
-        "UPDATE pots SET title=?1, description=?2, goal_cents=?3, payment_info=?4, organizer=?5, deadline=?6, allow_anonymous=?7, show_amounts=?8, show_names=?9 WHERE id=?10",
-        rusqlite::params![title, description, goal_cents, payment_info, organizer, deadline, allow_anonymous, show_amounts, show_names, id],
-    ).context("updating pot")?;
+    sqlx::query(
+        "UPDATE pots SET title=$1, description=$2, goal_cents=$3, payment_info=$4, organizer=$5, deadline=$6, allow_anonymous=$7, show_amounts=$8, show_names=$9 WHERE id=$10",
+    )
+    .bind(title)
+    .bind(description)
+    .bind(goal_cents)
+    .bind(payment_info)
+    .bind(organizer)
+    .bind(deadline)
+    .bind(allow_anonymous)
+    .bind(show_amounts)
+    .bind(show_names)
+    .bind(id)
+    .execute(pool)
+    .await
+    .context("updating pot")?;
     Ok(())
 }
 
-pub fn delete_pot(conn: &Connection, id: &str) -> anyhow::Result<()> {
-    conn.execute("DELETE FROM pots WHERE id = ?1", [id])
+pub async fn delete_pot(pool: &PgPool, id: &str) -> anyhow::Result<()> {
+    sqlx::query("DELETE FROM pots WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await
         .context("deleting pot")?;
     Ok(())
 }
 
-pub fn toggle_close(conn: &Connection, id: &str) -> anyhow::Result<bool> {
-    conn.execute(
-        "UPDATE pots SET closed = CASE WHEN closed = 0 THEN 1 ELSE 0 END WHERE id = ?1",
-        [id],
-    )
-    .context("toggling close")?;
-    let closed: bool = conn.query_row("SELECT closed FROM pots WHERE id = ?1", [id], |r| {
-        Ok(r.get::<_, i64>(0)? != 0)
-    })?;
-    Ok(closed)
+pub async fn toggle_close(pool: &PgPool, id: &str) -> anyhow::Result<bool> {
+    let row = sqlx::query("UPDATE pots SET closed = NOT closed WHERE id = $1 RETURNING closed")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .context("toggling close")?;
+    Ok(row.get("closed"))
 }
 
-pub fn slug_exists(conn: &Connection, slug: &str) -> anyhow::Result<bool> {
-    let count: i64 =
-        conn.query_row("SELECT COUNT(*) FROM pots WHERE slug = ?1", [slug], |r| r.get(0))?;
-    Ok(count > 0)
+pub async fn slug_exists(pool: &PgPool, slug: &str) -> anyhow::Result<bool> {
+    let row = sqlx::query("SELECT COUNT(*)::BIGINT AS c FROM pots WHERE slug = $1")
+        .bind(slug)
+        .fetch_one(pool)
+        .await?;
+    let n: i64 = row.get("c");
+    Ok(n > 0)
 }
 
-pub fn get_contribution_pot_id(conn: &Connection, id: &str) -> anyhow::Result<Option<String>> {
-    let mut stmt = conn.prepare("SELECT pot_id FROM contributions WHERE id = ?1")?;
-    let mut rows = stmt.query_map([id], |row| row.get::<_, String>(0))?;
-    Ok(rows.next().transpose()?)
+pub async fn get_contribution_pot_id(pool: &PgPool, id: &str) -> anyhow::Result<Option<String>> {
+    let row = sqlx::query("SELECT pot_id FROM contributions WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.map(|r| r.get("pot_id")))
 }
 
-pub fn create_contribution(
-    conn: &Connection,
+pub async fn create_contribution(
+    pool: &PgPool,
     id: &str,
     pot_id: &str,
     name: Option<&str>,
@@ -277,64 +344,47 @@ pub fn create_contribution(
     message: Option<&str>,
     user_id: Option<&str>,
 ) -> anyhow::Result<()> {
-    conn.execute(
-        "INSERT INTO contributions (id, pot_id, name, amount_cents, message, user_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        rusqlite::params![id, pot_id, name, amount_cents, message, user_id],
-    ).context("inserting contribution")?;
+    sqlx::query(
+        "INSERT INTO contributions (id, pot_id, name, amount_cents, message, created_at, user_id) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+    )
+    .bind(id)
+    .bind(pot_id)
+    .bind(name)
+    .bind(amount_cents)
+    .bind(message)
+    .bind(now_str())
+    .bind(user_id)
+    .execute(pool)
+    .await
+    .context("inserting contribution")?;
     Ok(())
 }
 
-pub fn get_contributions(conn: &Connection, pot_id: &str) -> anyhow::Result<Vec<Contribution>> {
-    let mut stmt = conn.prepare(
+pub async fn get_contributions(pool: &PgPool, pot_id: &str) -> anyhow::Result<Vec<Contribution>> {
+    let rows = sqlx::query_as::<_, Contribution>(
         "SELECT id, pot_id, name, amount_cents, message, confirmed, created_at, user_id
-         FROM contributions WHERE pot_id = ?1 ORDER BY created_at DESC",
-    )?;
-    let rows = stmt.query_map([pot_id], |row| {
-        Ok(Contribution {
-            id: row.get(0)?,
-            pot_id: row.get(1)?,
-            name: row.get(2)?,
-            amount_cents: row.get(3)?,
-            message: row.get(4)?,
-            confirmed: row.get::<_, i64>(5)? != 0,
-            created_at: row.get(6)?,
-            user_id: row.get(7)?,
-        })
-    })?;
-    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+         FROM contributions WHERE pot_id = $1 ORDER BY created_at DESC",
+    )
+    .bind(pot_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
 }
 
-pub fn delete_contribution(conn: &Connection, id: &str) -> anyhow::Result<()> {
-    conn.execute("DELETE FROM contributions WHERE id = ?1", [id])
+pub async fn delete_contribution(pool: &PgPool, id: &str) -> anyhow::Result<()> {
+    sqlx::query("DELETE FROM contributions WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await
         .context("deleting contribution")?;
     Ok(())
 }
 
-pub fn confirm_contribution(conn: &Connection, id: &str) -> anyhow::Result<()> {
-    conn.execute(
-        "UPDATE contributions SET confirmed = 1 WHERE id = ?1",
-        [id],
-    )
-    .context("confirming contribution")?;
+pub async fn confirm_contribution(pool: &PgPool, id: &str) -> anyhow::Result<()> {
+    sqlx::query("UPDATE contributions SET confirmed = TRUE WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await
+        .context("confirming contribution")?;
     Ok(())
-}
-
-fn row_to_pot(row: &rusqlite::Row) -> rusqlite::Result<Pot> {
-    Ok(Pot {
-        id: row.get(0)?,
-        slug: row.get(1)?,
-        title: row.get(2)?,
-        description: row.get(3)?,
-        goal_cents: row.get(4)?,
-        currency: row.get(5)?,
-        payment_info: row.get(6)?,
-        organizer: row.get(7)?,
-        deadline: row.get(8)?,
-        allow_anonymous: row.get::<_, i64>(9)? != 0,
-        show_amounts: row.get::<_, i64>(10)? != 0,
-        show_names: row.get::<_, i64>(11)? != 0,
-        closed: row.get::<_, i64>(12)? != 0,
-        created_at: row.get(13)?,
-        owner_id: row.get(14)?,
-    })
 }

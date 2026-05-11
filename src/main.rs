@@ -10,11 +10,12 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use sqlx::PgPool;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
 pub struct AppState {
-    pub db: Mutex<rusqlite::Connection>,
+    pub pool: PgPool,
     pub rate_limiter: Mutex<HashMap<String, Instant>>,
     pub jwt_secret: Vec<u8>,
 }
@@ -25,7 +26,8 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    let db_path = std::env::var("DB_PATH").unwrap_or_else(|_| "data/cagnotte.db".into());
+    let database_url = std::env::var("DATABASE_URL")
+        .map_err(|_| anyhow::anyhow!("DATABASE_URL required (postgres://user:pass@host:5432/db)"))?;
     let port: u16 = std::env::var("PORT")
         .unwrap_or_else(|_| "3000".into())
         .parse()?;
@@ -35,9 +37,9 @@ async fn main() -> anyhow::Result<()> {
         format!("{}{}", uuid::Uuid::new_v4(), uuid::Uuid::new_v4())
     });
 
-    let conn = db::init(&db_path)?;
+    let pool = db::connect(&database_url).await?;
     let state = Arc::new(AppState {
-        db: Mutex::new(conn),
+        pool,
         rate_limiter: Mutex::new(HashMap::new()),
         jwt_secret: jwt_secret.into_bytes(),
     });
