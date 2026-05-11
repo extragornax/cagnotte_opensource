@@ -19,6 +19,7 @@ pub struct Pot {
     pub closed: bool,
     pub created_at: String,
     pub owner_id: Option<String>,
+    pub is_public: bool,
 }
 
 #[derive(sqlx::FromRow)]
@@ -43,6 +44,7 @@ pub struct PotSummary {
     pub closed: bool,
     pub deadline: Option<String>,
     pub owner_id: Option<String>,
+    pub is_public: bool,
 }
 
 pub struct ContributionWithPot {
@@ -101,12 +103,18 @@ pub async fn init(pool: &PgPool) -> anyhow::Result<()> {
             show_names      BOOLEAN NOT NULL DEFAULT TRUE,
             closed          BOOLEAN NOT NULL DEFAULT FALSE,
             created_at      TEXT NOT NULL,
-            owner_id        TEXT REFERENCES users(id) ON DELETE SET NULL
+            owner_id        TEXT REFERENCES users(id) ON DELETE SET NULL,
+            is_public       BOOLEAN NOT NULL DEFAULT FALSE
         )",
     )
     .execute(pool)
     .await
     .context("create pots")?;
+
+    sqlx::query("ALTER TABLE pots ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT FALSE")
+        .execute(pool)
+        .await
+        .ok();
 
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS contributions (
@@ -174,7 +182,7 @@ pub async fn create_pot(
 
 pub async fn get_pot_by_slug(pool: &PgPool, slug: &str) -> anyhow::Result<Option<Pot>> {
     let pot = sqlx::query_as::<_, Pot>(
-        "SELECT id, slug, title, description, goal_cents, currency, payment_info, organizer, deadline, allow_anonymous, show_amounts, show_names, closed, created_at, owner_id
+        "SELECT id, slug, title, description, goal_cents, currency, payment_info, organizer, deadline, allow_anonymous, show_amounts, show_names, closed, created_at, owner_id, is_public
          FROM pots WHERE slug = $1",
     )
     .bind(slug)
@@ -185,7 +193,7 @@ pub async fn get_pot_by_slug(pool: &PgPool, slug: &str) -> anyhow::Result<Option
 
 pub async fn get_pot_by_id(pool: &PgPool, id: &str) -> anyhow::Result<Option<Pot>> {
     let pot = sqlx::query_as::<_, Pot>(
-        "SELECT id, slug, title, description, goal_cents, currency, payment_info, organizer, deadline, allow_anonymous, show_amounts, show_names, closed, created_at, owner_id
+        "SELECT id, slug, title, description, goal_cents, currency, payment_info, organizer, deadline, allow_anonymous, show_amounts, show_names, closed, created_at, owner_id, is_public
          FROM pots WHERE id = $1",
     )
     .bind(id)
@@ -194,24 +202,46 @@ pub async fn get_pot_by_id(pool: &PgPool, id: &str) -> anyhow::Result<Option<Pot
     Ok(pot)
 }
 
-async fn pot_summaries(pool: &PgPool, owner: Option<&str>) -> anyhow::Result<Vec<PotSummary>> {
-    let sql = match owner {
-        Some(_) => "SELECT p.id, p.slug, p.title, p.goal_cents, p.closed, p.deadline, p.owner_id,
-                COALESCE(SUM(c.amount_cents)::BIGINT, 0) AS total_cents,
-                COUNT(c.id)::BIGINT AS contributor_count
-         FROM pots p LEFT JOIN contributions c ON c.pot_id = p.id
-         WHERE p.owner_id = $1
-         GROUP BY p.id
-         ORDER BY p.closed ASC, p.created_at DESC",
-        None => "SELECT p.id, p.slug, p.title, p.goal_cents, p.closed, p.deadline, p.owner_id,
-                COALESCE(SUM(c.amount_cents)::BIGINT, 0) AS total_cents,
-                COUNT(c.id)::BIGINT AS contributor_count
-         FROM pots p LEFT JOIN contributions c ON c.pot_id = p.id
-         GROUP BY p.id
-         ORDER BY p.closed ASC, p.created_at DESC",
+pub enum PotFilter<'a> {
+    All,
+    PublicOnly,
+    Owner(&'a str),
+}
+
+async fn pot_summaries(pool: &PgPool, filter: PotFilter<'_>) -> anyhow::Result<Vec<PotSummary>> {
+    let (sql, owner_bind): (&str, Option<&str>) = match filter {
+        PotFilter::Owner(o) => (
+            "SELECT p.id, p.slug, p.title, p.goal_cents, p.closed, p.deadline, p.owner_id, p.is_public,
+                    COALESCE(SUM(c.amount_cents)::BIGINT, 0) AS total_cents,
+                    COUNT(c.id)::BIGINT AS contributor_count
+             FROM pots p LEFT JOIN contributions c ON c.pot_id = p.id
+             WHERE p.owner_id = $1
+             GROUP BY p.id
+             ORDER BY p.closed ASC, p.created_at DESC",
+            Some(o),
+        ),
+        PotFilter::PublicOnly => (
+            "SELECT p.id, p.slug, p.title, p.goal_cents, p.closed, p.deadline, p.owner_id, p.is_public,
+                    COALESCE(SUM(c.amount_cents)::BIGINT, 0) AS total_cents,
+                    COUNT(c.id)::BIGINT AS contributor_count
+             FROM pots p LEFT JOIN contributions c ON c.pot_id = p.id
+             WHERE p.is_public = TRUE
+             GROUP BY p.id
+             ORDER BY p.closed ASC, p.created_at DESC",
+            None,
+        ),
+        PotFilter::All => (
+            "SELECT p.id, p.slug, p.title, p.goal_cents, p.closed, p.deadline, p.owner_id, p.is_public,
+                    COALESCE(SUM(c.amount_cents)::BIGINT, 0) AS total_cents,
+                    COUNT(c.id)::BIGINT AS contributor_count
+             FROM pots p LEFT JOIN contributions c ON c.pot_id = p.id
+             GROUP BY p.id
+             ORDER BY p.closed ASC, p.created_at DESC",
+            None,
+        ),
     };
     let mut q = sqlx::query(sql);
-    if let Some(o) = owner {
+    if let Some(o) = owner_bind {
         q = q.bind(o);
     }
     let rows = q.fetch_all(pool).await?;
@@ -225,18 +255,23 @@ async fn pot_summaries(pool: &PgPool, owner: Option<&str>) -> anyhow::Result<Vec
             closed: r.get("closed"),
             deadline: r.get("deadline"),
             owner_id: r.get("owner_id"),
+            is_public: r.get("is_public"),
             total_cents: r.get("total_cents"),
             contributor_count: r.get("contributor_count"),
         })
         .collect())
 }
 
-pub async fn list_pots(pool: &PgPool) -> anyhow::Result<Vec<PotSummary>> {
-    pot_summaries(pool, None).await
+pub async fn list_public_pots(pool: &PgPool) -> anyhow::Result<Vec<PotSummary>> {
+    pot_summaries(pool, PotFilter::PublicOnly).await
+}
+
+pub async fn list_all_pots(pool: &PgPool) -> anyhow::Result<Vec<PotSummary>> {
+    pot_summaries(pool, PotFilter::All).await
 }
 
 pub async fn list_pots_by_owner(pool: &PgPool, owner_id: &str) -> anyhow::Result<Vec<PotSummary>> {
-    pot_summaries(pool, Some(owner_id)).await
+    pot_summaries(pool, PotFilter::Owner(owner_id)).await
 }
 
 pub async fn list_contributions_by_user(
@@ -316,6 +351,15 @@ pub async fn toggle_close(pool: &PgPool, id: &str) -> anyhow::Result<bool> {
         .await
         .context("toggling close")?;
     Ok(row.get("closed"))
+}
+
+pub async fn toggle_public(pool: &PgPool, id: &str) -> anyhow::Result<bool> {
+    let row = sqlx::query("UPDATE pots SET is_public = NOT is_public WHERE id = $1 RETURNING is_public")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .context("toggling public")?;
+    Ok(row.get("is_public"))
 }
 
 pub async fn slug_exists(pool: &PgPool, slug: &str) -> anyhow::Result<bool> {

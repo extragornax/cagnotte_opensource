@@ -49,6 +49,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/pots", post(create_pot))
         .route("/api/pots/{id}", put(update_pot_handler).delete(delete_pot_handler))
         .route("/api/pots/{id}/close", post(close_pot))
+        .route("/api/pots/{id}/publish", post(publish_pot))
         .route("/api/pots/{id}/contribute", post(contribute))
         .route("/api/pots/{id}/export.csv", get(export_csv))
         .route("/api/contributions/{id}", delete(delete_contribution_handler))
@@ -200,13 +201,13 @@ async fn index_page(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Html<String>, (StatusCode, String)> {
-    let pots = db::list_pots(&state.pool).await.map_err(internal)?;
+    let pots = db::list_public_pots(&state.pool).await.map_err(internal)?;
     let nav = nav_html(&state, &headers).await;
 
     let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let mut cards = String::new();
     if pots.is_empty() {
-        cards.push_str("<p class=\"empty\">Aucune cagnotte pour le moment.</p>");
+        cards.push_str("<p class=\"empty\">Aucune cagnotte publique pour le moment.</p>");
     }
     for pot in &pots {
         let pct = if pot.goal_cents > 0 { (pot.total_cents * 100 / pot.goal_cents).min(100) } else { 0 };
@@ -540,6 +541,8 @@ async fn admin_page(
 
     let close_btn_text = if closed { "Rouvrir" } else { "Fermer" };
     let closed_label = if closed { "Fermée" } else { "Ouverte" };
+    let public_btn_text = if pot.is_public { "Rendre privée" } else { "Rendre publique" };
+    let public_label = if pot.is_public { "Publique" } else { "Privée (lien direct)" };
 
     let html = ADMIN_TEMPLATE
         .replace("{{nav}}", &nav)
@@ -555,6 +558,8 @@ async fn admin_page(
         .replace("{{contrib_rows}}", &contrib_rows)
         .replace("{{close_btn_text}}", close_btn_text)
         .replace("{{closed_label}}", closed_label)
+        .replace("{{public_btn_text}}", public_btn_text)
+        .replace("{{public_label}}", public_label)
         .replace("{{pot_id}}", &html_escape(&pot.id))
         .replace("{{pot_slug}}", &html_escape(&pot.slug))
         .replace("{{edit_title}}", &html_escape(&pot.title))
@@ -577,7 +582,7 @@ async fn admin_dashboard_page(
     headers: HeaderMap,
 ) -> Result<axum::response::Response, (StatusCode, String)> {
     require_admin(&state.pool, &state, &headers).await?;
-    let pots = db::list_pots(&state.pool).await.map_err(internal)?;
+    let pots = db::list_all_pots(&state.pool).await.map_err(internal)?;
     let all_users = users::list_users(&state.pool).await.map_err(internal)?;
     let nav = nav_html(&state, &headers).await;
 
@@ -951,6 +956,17 @@ async fn close_pot(
     check_pot_access(&state.pool, &state, &headers, &pot).await?;
     let closed = db::toggle_close(&state.pool, &id).await.map_err(internal)?;
     Ok(Json(json!({"ok": true, "closed": closed})))
+}
+
+async fn publish_pot(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let pot = db::get_pot_by_id(&state.pool, &id).await.map_err(internal)?.ok_or_else(not_found)?;
+    check_pot_access(&state.pool, &state, &headers, &pot).await?;
+    let is_public = db::toggle_public(&state.pool, &id).await.map_err(internal)?;
+    Ok(Json(json!({"ok": true, "is_public": is_public})))
 }
 
 #[derive(Deserialize)]

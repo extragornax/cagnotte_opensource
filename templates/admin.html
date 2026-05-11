@@ -71,7 +71,7 @@ footer{border-top:1px solid var(--rule);margin-top:3rem;padding-top:1rem;font-fa
   <h1>{{title}}</h1>
   <p class="organizer">Organisé par {{organizer}}</p>
   <p class="public-link">Page publique : <a href="/p/{{pot_slug}}">/p/{{pot_slug}}</a></p>
-  <p class="status"><span class="status__label">Statut :</span> {{closed_label}} · {{contributor_count}} contributeur(s)</p>
+  <p class="status"><span class="status__label">Statut :</span> {{closed_label}} · {{public_label}} · {{contributor_count}} contributeur(s)</p>
 
   <div class="progress">
     <div class="progress__bar"><div class="progress__fill" style="width:{{progress_width}}%;background:{{progress_color}}"></div></div>
@@ -82,6 +82,7 @@ footer{border-top:1px solid var(--rule);margin-top:3rem;padding-top:1rem;font-fa
   </div>
 
   <div class="actions">
+    <button class="btn btn--teal" onclick="togglePublish()">{{public_btn_text}}</button>
     <button class="btn btn--teal" onclick="toggleClose()">{{close_btn_text}}</button>
     <a class="btn btn--outline" href="/api/pots/{{pot_id}}/export.csv">Export CSV</a>
     <button class="btn btn--danger" onclick="deletePot()">Supprimer la cagnotte</button>
@@ -184,6 +185,10 @@ function deleteContrib(id){
 }
 function toggleClose(){
   api('POST','/api/pots/'+POT_ID+'/close').then(function(){location.reload()})
+  .catch(function(e){alert(e.message)});
+}
+function togglePublish(){
+  api('POST','/api/pots/'+POT_ID+'/publish').then(function(){location.reload()})
   .catch(function(e){alert(e.message)});
 }
 function deletePot(){
