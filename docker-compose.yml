@@ -1,0 +1,21 @@
+services:
+  cagnotte:
+    build: .
+    image: cagnotte:latest
+    container_name: cagnotte
+    restart: unless-stopped
+    ports:
+      - "9023:9021"
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET required}
+      RUST_LOG: ${RUST_LOG:-info,cagnotte=info}
+      PORT: 9021
+      DB_PATH: /data/cagnotte.db
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9021/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

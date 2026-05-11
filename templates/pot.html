@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}} — Cagnotte</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700;800&family=Fraunces:opsz@9..144&family=Space+Mono&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#F3ECD9;--ink:#0E1424;--ink-soft:#2A2F3E;--mustard:#D9A326;--vermilion:#E54B2A;--teal:#2C6B7E;--rule:rgba(14,20,36,.18)}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--paper);color:var(--ink);font-family:'Fraunces',serif;line-height:1.6;min-height:100vh}
+body::before{content:'';position:fixed;inset:0;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");opacity:.28;pointer-events:none;z-index:9999}
+.wrap{max-width:700px;margin:0 auto;padding:2rem 1.5rem}
+header{border-bottom:2px solid var(--ink);padding-bottom:1rem;margin-bottom:2.5rem;display:flex;justify-content:space-between;align-items:baseline;gap:1rem;flex-wrap:wrap}
+.site-name{font-family:'Bricolage Grotesque',sans-serif;font-weight:800;font-size:1.1rem;letter-spacing:-.02em;text-decoration:none;color:var(--ink)}
+.nav{display:flex;gap:1rem;align-items:center;flex-wrap:wrap;font-family:'Space Mono',monospace;font-size:.8rem}
+.nav__link{color:var(--ink);text-decoration:none}
+.nav__link:hover{text-decoration:underline}
+.nav__link--primary{background:var(--vermilion);color:#fff;padding:.3rem .7rem}
+.nav__user{color:var(--ink-soft)}
+.nav__logout{background:none;border:none;color:var(--ink);font-family:inherit;font-size:inherit;cursor:pointer;text-decoration:underline;padding:0}
+.logged-in-notice{font-family:'Space Mono',monospace;font-size:.8rem;color:var(--ink-soft);margin-bottom:.8rem}
+.logged-in-notice a{color:var(--teal)}
+h1{font-family:'Bricolage Grotesque',sans-serif;font-weight:800;font-size:2.2rem;letter-spacing:-.03em;line-height:1.1;margin-bottom:.3rem}
+.organizer{font-family:'Space Mono',monospace;font-size:.85rem;color:var(--ink-soft);margin-bottom:1.2rem}
+.description{margin-bottom:2rem;font-size:1.05rem}
+.progress{margin-bottom:.5rem}
+.progress__bar{height:12px;background:var(--rule);border-radius:6px;overflow:hidden}
+.progress__fill{height:100%;border-radius:6px;transition:width .4s}
+.progress__text{display:flex;justify-content:space-between;align-items:baseline;margin-top:.4rem;font-family:'Space Mono',monospace;font-size:.85rem}
+.progress__amounts{font-weight:700}
+.exceeded{color:var(--mustard);font-weight:700;margin-left:.5rem}
+.meta{font-family:'Space Mono',monospace;font-size:.8rem;color:var(--ink-soft);margin-bottom:2rem}
+.section{border-top:1px solid var(--rule);padding-top:1.5rem;margin-top:1.5rem}
+.section__title{font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:1.1rem;margin-bottom:1rem;text-transform:lowercase;letter-spacing:.04em}
+.payment-info{border:1.5px solid var(--ink);background:var(--paper);padding:1.2rem;font-family:'Space Mono',monospace;font-size:.85rem;line-height:1.5;white-space:pre-wrap;word-break:break-all;margin-bottom:.8rem}
+.payment-hint{font-size:.9rem;color:var(--ink-soft);margin-bottom:.5rem}
+.form{display:flex;flex-direction:column;gap:1rem}
+.form__field{display:flex;flex-direction:column;gap:.3rem}
+.form__field label{font-family:'Space Mono',monospace;font-size:.75rem;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-soft)}
+.form__field input,.form__field textarea{border:1.5px solid var(--ink);background:var(--paper);padding:.7rem .8rem;font-family:'Fraunces',serif;font-size:1rem;color:var(--ink);outline:none;transition:border-color .2s}
+.form__field input:focus,.form__field textarea:focus{border-color:var(--teal)}
+.btn{display:inline-block;border:2px solid var(--ink);background:var(--vermilion);color:#fff;padding:.8rem 1.6rem;font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:1rem;cursor:pointer;transition:transform .1s,box-shadow .1s;text-align:center}
+.btn:hover{transform:translateY(-1px);box-shadow:3px 3px 0 var(--ink)}
+.btn:active{transform:translateY(0);box-shadow:none}
+.form__feedback{font-family:'Space Mono',monospace;font-size:.85rem;min-height:1.2em}
+.form__feedback--ok{color:var(--teal)}
+.form__feedback--err{color:var(--vermilion)}
+.contrib-list{list-style:none;margin:0;padding:0}
+.contrib{padding:.7rem 0;border-bottom:1px solid var(--rule);font-size:.95rem}
+.contrib:last-child{border-bottom:none}
+.contrib__msg{font-style:italic;color:var(--ink-soft)}
+.badge{display:inline-block;background:var(--teal);color:#fff;font-size:.7rem;padding:.1rem .4rem;border-radius:2px;vertical-align:middle;margin-left:.3rem}
+.closed-msg{font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:1.1rem;color:var(--ink-soft);text-align:center;padding:2rem 0}
+footer{border-top:1px solid var(--rule);margin-top:3rem;padding-top:1rem;font-family:'Space Mono',monospace;font-size:.7rem;color:var(--ink-soft);text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a href="/" class="site-name">cagnotte.extragornax.fr</a>
+    {{nav}}
+  </header>
+  <h1>{{title}}</h1>
+  <p class="organizer">Organisé par {{organizer}}</p>
+  <p class="description">{{description}}</p>
+
+  <div class="progress">
+    <div class="progress__bar"><div class="progress__fill" style="width:{{progress_width}}%;background:{{progress_color}}"></div></div>
+    <div class="progress__text">
+      <span class="progress__amounts">{{current_amount}} / {{goal_amount}}</span>
+      <span>{{percentage}}{{progress_extra}}</span>
+    </div>
+  </div>
+  <p class="meta">{{count_text}}{{time_sep}}{{time_info}}</p>
+
+  {{payment_section}}
+  {{form_section}}
+
+  <section class="section">
+    <h3 class="section__title">Contributeurs</h3>
+    <ul class="contrib-list" id="contrib-list">
+      {{contributions_list}}
+    </ul>
+  </section>
+
+  <footer>© extragornax · self-hosted</footer>
+</div>
+<script>
+(function(){
+  var form = document.getElementById('contribute-form');
+  if (!form) return;
+  var slug = '{{slug}}';
+  form.addEventListener('submit', function(e){
+    e.preventDefault();
+    var fb = document.getElementById('form-feedback');
+    fb.textContent = '';
+    fb.className = 'form__feedback';
+    var name = (form.querySelector('#name').value || '').trim();
+    var amountRaw = parseFloat(form.querySelector('#amount').value);
+    var message = (form.querySelector('#message').value || '').trim();
+    if (isNaN(amountRaw) || amountRaw < 1) {
+      fb.textContent = 'Montant invalide.';
+      fb.classList.add('form__feedback--err');
+      return;
+    }
+    var body = {
+      amount_cents: Math.round(amountRaw * 100),
+      name: name || null,
+      message: message || null
+    };
+    var btn = form.querySelector('button[type=submit]');
+    btn.disabled = true;
+    btn.textContent = 'Envoi...';
+    fetch('/api/pots/' + encodeURIComponent(slug) + '/contribute', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    }).then(function(r){
+      if (!r.ok) return r.text().then(function(t){ throw new Error(t); });
+      return r.json();
+    }).then(function(){
+      fb.textContent = 'Merci pour ta contribution !';
+      fb.classList.add('form__feedback--ok');
+      form.reset();
+      setTimeout(function(){ location.reload(); }, 1200);
+    }).catch(function(err){
+      fb.textContent = err.message || 'Erreur lors de la soumission.';
+      fb.classList.add('form__feedback--err');
+    }).finally(function(){
+      btn.disabled = false;
+      btn.textContent = 'Je confirme ma participation';
+    });
+  });
+})();
+</script>
+</body>
+</html>

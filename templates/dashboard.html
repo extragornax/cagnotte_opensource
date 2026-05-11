@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard — Cagnotte</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700;800&family=Fraunces:opsz@9..144&family=Space+Mono&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#F3ECD9;--ink:#0E1424;--ink-soft:#2A2F3E;--mustard:#D9A326;--vermilion:#E54B2A;--teal:#2C6B7E;--rule:rgba(14,20,36,.18)}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--paper);color:var(--ink);font-family:'Fraunces',serif;line-height:1.6;min-height:100vh}
+body::before{content:'';position:fixed;inset:0;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");opacity:.28;pointer-events:none;z-index:9999}
+.wrap{max-width:1000px;margin:0 auto;padding:2rem 1.5rem}
+header{border-bottom:2px solid var(--ink);padding-bottom:1rem;margin-bottom:2.5rem;display:flex;justify-content:space-between;align-items:baseline;gap:1rem;flex-wrap:wrap}
+.site-name{font-family:'Bricolage Grotesque',sans-serif;font-weight:800;font-size:1.1rem;letter-spacing:-.02em;text-decoration:none;color:var(--ink)}
+.nav{display:flex;gap:1rem;align-items:center;flex-wrap:wrap;font-family:'Space Mono',monospace;font-size:.8rem}
+.nav__link{color:var(--ink);text-decoration:none}
+.nav__link:hover{text-decoration:underline}
+.nav__link--primary{background:var(--vermilion);color:#fff;padding:.3rem .7rem}
+.nav__user{color:var(--ink-soft)}
+.nav__logout{background:none;border:none;color:var(--ink);font-family:inherit;font-size:inherit;cursor:pointer;text-decoration:underline;padding:0}
+h1{font-family:'Bricolage Grotesque',sans-serif;font-weight:800;font-size:2.2rem;letter-spacing:-.03em;line-height:1.1;margin-bottom:.3rem}
+h2{font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:1.3rem;margin-bottom:1rem;letter-spacing:-.01em}
+.subtitle{font-family:'Space Mono',monospace;font-size:.85rem;color:var(--ink-soft);margin-bottom:2rem}
+.section{border-top:1px solid var(--rule);padding-top:1.5rem;margin-top:2rem}
+table{width:100%;border-collapse:collapse;font-size:.9rem;table-layout:auto}
+th{font-family:'Space Mono',monospace;font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;text-align:left;padding:.6rem .5rem;border-bottom:2px solid var(--ink);color:var(--ink-soft);white-space:nowrap}
+td{padding:.6rem .5rem;border-bottom:1px solid var(--rule);vertical-align:middle}
+.row__title{font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:1rem}
+.row__title a{color:var(--ink);text-decoration:none}
+.row__title a:hover{text-decoration:underline}
+.row__amount,.row__pct{font-family:'Space Mono',monospace;font-size:.85rem}
+.row__actions{white-space:nowrap;text-align:right}
+.empty{text-align:center;font-style:italic;color:var(--ink-soft);padding:2rem 0}
+.status{display:inline-block;font-family:'Space Mono',monospace;font-size:.7rem;padding:.15rem .5rem;letter-spacing:.04em;text-transform:uppercase}
+.status--open{background:var(--teal);color:#fff}
+.status--closed{background:var(--rule);color:var(--ink-soft)}
+.badge{display:inline-block;background:var(--teal);color:#fff;font-size:.7rem;padding:.1rem .4rem;border-radius:2px}
+.btn{display:inline-block;border:2px solid var(--ink);background:var(--vermilion);color:#fff;padding:.6rem 1.2rem;font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:.9rem;cursor:pointer;transition:transform .1s,box-shadow .1s;text-decoration:none;text-align:center}
+.btn:hover{transform:translateY(-1px);box-shadow:3px 3px 0 var(--ink)}
+.btn:active{transform:translateY(0);box-shadow:none}
+.btn--sm{padding:.3rem .7rem;font-size:.75rem}
+.btn--teal{background:var(--teal)}
+.btn--outline{background:transparent;color:var(--ink)}
+.create-form{display:grid;grid-template-columns:1fr 1fr;gap:.8rem;margin-top:1rem}
+.create-form .full{grid-column:1/-1}
+.create-form label{display:block;font-family:'Space Mono',monospace;font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-soft);margin-bottom:.2rem}
+.create-form input,.create-form textarea{width:100%;border:1.5px solid var(--ink);background:var(--paper);padding:.6rem .7rem;font-family:'Fraunces',serif;font-size:.95rem;color:var(--ink)}
+.create-form input:focus,.create-form textarea:focus{outline:none;border-color:var(--teal)}
+.create-form .help{font-family:'Space Mono',monospace;font-size:.7rem;color:var(--ink-soft);margin-top:.2rem}
+.checkbox-row{display:flex;align-items:center;gap:.5rem;font-family:'Space Mono',monospace;font-size:.8rem}
+.checkbox-row input[type=checkbox]{width:1rem;height:1rem;accent-color:var(--teal)}
+.feedback{font-family:'Space Mono',monospace;font-size:.85rem;min-height:1.2em;padding:.5rem 0}
+.feedback--ok{color:var(--teal)}
+.feedback--err{color:var(--vermilion)}
+footer{border-top:1px solid var(--rule);margin-top:3rem;padding-top:1rem;font-family:'Space Mono',monospace;font-size:.7rem;color:var(--ink-soft);text-align:center}
+@media (max-width:600px){.create-form{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a href="/" class="site-name">cagnotte.extragornax.fr</a>
+    {{nav}}
+  </header>
+
+  <h1>Salut {{user_name}}</h1>
+  <p class="subtitle">{{pot_count}} cagnotte(s) gérée(s) · {{contrib_count}} contribution(s)</p>
+
+  <section class="section">
+    <h2>Mes cagnottes</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Titre</th>
+          <th>Montant</th>
+          <th>%</th>
+          <th>Contrib.</th>
+          <th>Deadline</th>
+          <th>Statut</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{pot_rows}}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="section">
+    <h2>Mes contributions</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Cagnotte</th>
+          <th>Montant</th>
+          <th>Date</th>
+          <th>Confirmée</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{contrib_rows}}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="section">
+    <h2>Nouvelle cagnotte</h2>
+    <form id="create-form" class="create-form">
+      <div class="full">
+        <label for="c-title">Titre</label>
+        <input type="text" id="c-title" required maxlength="200" placeholder="Cadeau départ Julien">
+      </div>
+      <div class="full">
+        <label for="c-desc">Description</label>
+        <textarea id="c-desc" rows="2" placeholder="Quelques mots sur la cagnotte..."></textarea>
+      </div>
+      <div>
+        <label for="c-goal">Objectif (€)</label>
+        <input type="number" id="c-goal" min="1" step="0.01" required placeholder="150">
+      </div>
+      <div>
+        <label for="c-organizer">Organisateur</label>
+        <input type="text" id="c-organizer" placeholder="Ton nom">
+      </div>
+      <div class="full">
+        <label for="c-payment">Infos de paiement</label>
+        <textarea id="c-payment" rows="3" placeholder="Lydia : 06 12 34 56 78&#10;IBAN : FR76..."></textarea>
+      </div>
+      <div>
+        <label for="c-deadline">Deadline</label>
+        <input type="date" id="c-deadline">
+      </div>
+      <div></div>
+      <div class="checkbox-row"><input type="checkbox" id="c-anon" checked><label for="c-anon">Anonyme autorisé</label></div>
+      <div class="checkbox-row"><input type="checkbox" id="c-amounts" checked><label for="c-amounts">Montants visibles</label></div>
+      <div class="checkbox-row"><input type="checkbox" id="c-names" checked><label for="c-names">Noms visibles</label></div>
+      <div></div>
+      <div class="full"><button type="submit" class="btn">Créer la cagnotte</button></div>
+      <div class="full"><div id="create-feedback" class="feedback"></div></div>
+    </form>
+  </section>
+
+  <footer>© extragornax · self-hosted</footer>
+</div>
+<script>
+document.getElementById('create-form').addEventListener('submit', function(e){
+  e.preventDefault();
+  var fb = document.getElementById('create-feedback');
+  fb.textContent = '';
+  fb.className = 'feedback';
+  var goalEur = parseFloat(document.getElementById('c-goal').value);
+  if (isNaN(goalEur) || goalEur < 1) {
+    fb.textContent = 'Objectif invalide.';
+    fb.className = 'feedback feedback--err';
+    return;
+  }
+  var body = {
+    title: document.getElementById('c-title').value.trim(),
+    description: document.getElementById('c-desc').value.trim(),
+    goal_cents: Math.round(goalEur * 100),
+    payment_info: document.getElementById('c-payment').value,
+    organizer: document.getElementById('c-organizer').value.trim(),
+    deadline: document.getElementById('c-deadline').value || null,
+    allow_anonymous: document.getElementById('c-anon').checked,
+    show_amounts: document.getElementById('c-amounts').checked,
+    show_names: document.getElementById('c-names').checked
+  };
+  var btn = e.target.querySelector('button[type=submit]');
+  btn.disabled = true;
+  btn.textContent = 'Création...';
+  fetch('/api/pots', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  }).then(function(r){
+    if (!r.ok) return r.text().then(function(t){ throw new Error(t) });
+    return r.json();
+  }).then(function(res){
+    fb.innerHTML = 'Créée ! <a href="'+res.admin_url+'">Gérer</a> · <a href="'+res.public_url+'" target="_blank">Voir</a>';
+    fb.className = 'feedback feedback--ok';
+    setTimeout(function(){ location.reload(); }, 1500);
+  }).catch(function(err){
+    fb.textContent = err.message || 'Erreur lors de la création.';
+    fb.className = 'feedback feedback--err';
+  }).finally(function(){
+    btn.disabled = false;
+    btn.textContent = 'Créer la cagnotte';
+  });
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin Dashboard — Cagnotte</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700;800&family=Fraunces:opsz@9..144&family=Space+Mono&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#F3ECD9;--ink:#0E1424;--ink-soft:#2A2F3E;--mustard:#D9A326;--vermilion:#E54B2A;--teal:#2C6B7E;--rule:rgba(14,20,36,.18)}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--paper);color:var(--ink);font-family:'Fraunces',serif;line-height:1.6;min-height:100vh}
+body::before{content:'';position:fixed;inset:0;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");opacity:.28;pointer-events:none;z-index:9999}
+.wrap{max-width:1000px;margin:0 auto;padding:2rem 1.5rem}
+header{border-bottom:2px solid var(--ink);padding-bottom:1rem;margin-bottom:2.5rem;display:flex;justify-content:space-between;align-items:baseline;gap:1rem;flex-wrap:wrap}
+.site-name{font-family:'Bricolage Grotesque',sans-serif;font-weight:800;font-size:1.1rem;letter-spacing:-.02em;text-decoration:none;color:var(--ink)}
+.nav{display:flex;gap:1rem;align-items:center;flex-wrap:wrap;font-family:'Space Mono',monospace;font-size:.8rem}
+.nav__link{color:var(--ink);text-decoration:none}
+.nav__link:hover{text-decoration:underline}
+.nav__link--primary{background:var(--vermilion);color:#fff;padding:.3rem .7rem}
+.nav__user{color:var(--ink-soft)}
+.nav__logout{background:none;border:none;color:var(--ink);font-family:inherit;font-size:inherit;cursor:pointer;text-decoration:underline;padding:0}
+.admin-badge{font-family:'Space Mono',monospace;font-size:.75rem;background:var(--ink);color:var(--paper);padding:.2rem .6rem;letter-spacing:.04em;margin-bottom:1rem;display:inline-block}
+h1{font-family:'Bricolage Grotesque',sans-serif;font-weight:800;font-size:2.2rem;letter-spacing:-.03em;line-height:1.1;margin-bottom:.3rem}
+h2{font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:1.3rem;margin-bottom:1rem;letter-spacing:-.01em}
+.subtitle{font-family:'Space Mono',monospace;font-size:.85rem;color:var(--ink-soft);margin-bottom:2rem}
+.section{border-top:1px solid var(--rule);padding-top:1.5rem;margin-top:2rem}
+table{width:100%;border-collapse:collapse;font-size:.9rem;table-layout:auto}
+th{font-family:'Space Mono',monospace;font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;text-align:left;padding:.6rem .5rem;border-bottom:2px solid var(--ink);color:var(--ink-soft);white-space:nowrap}
+td{padding:.6rem .5rem;border-bottom:1px solid var(--rule);vertical-align:middle}
+.row__title{font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:1rem}
+.row__title a{color:var(--ink);text-decoration:none}
+.row__title a:hover{text-decoration:underline}
+.row__amount,.row__pct{font-family:'Space Mono',monospace;font-size:.85rem}
+.row__actions{white-space:nowrap;text-align:right}
+.empty{text-align:center;font-style:italic;color:var(--ink-soft);padding:2rem 0}
+.status{display:inline-block;font-family:'Space Mono',monospace;font-size:.7rem;padding:.15rem .5rem;letter-spacing:.04em;text-transform:uppercase}
+.status--open{background:var(--teal);color:#fff}
+.status--closed{background:var(--rule);color:var(--ink-soft)}
+.btn{display:inline-block;border:2px solid var(--ink);background:var(--vermilion);color:#fff;padding:.6rem 1.2rem;font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:.9rem;cursor:pointer;transition:transform .1s,box-shadow .1s;text-decoration:none;text-align:center}
+.btn:hover{transform:translateY(-1px);box-shadow:3px 3px 0 var(--ink)}
+.btn:active{transform:translateY(0);box-shadow:none}
+.btn--sm{padding:.3rem .7rem;font-size:.75rem}
+.btn--teal{background:var(--teal)}
+.btn--outline{background:transparent;color:var(--ink)}
+.btn--danger{background:var(--vermilion)}
+.badge{display:inline-block;font-family:'Space Mono',monospace;font-size:.7rem;padding:.15rem .5rem;letter-spacing:.04em;text-transform:uppercase}
+.badge--admin{background:var(--mustard);color:var(--ink)}
+.badge--user{background:var(--rule);color:var(--ink-soft)}
+.toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:1rem}
+.search{flex:1;min-width:200px;border:1.5px solid var(--ink);background:var(--paper);padding:.5rem .7rem;font-family:'Fraunces',serif;font-size:.9rem;color:var(--ink)}
+.search:focus{outline:none;border-color:var(--teal)}
+footer{border-top:1px solid var(--rule);margin-top:3rem;padding-top:1rem;font-family:'Space Mono',monospace;font-size:.7rem;color:var(--ink-soft);text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a href="/" class="site-name">cagnotte.extragornax.fr</a>
+    {{nav}}
+  </header>
+
+  <span class="admin-badge">ADMIN DASHBOARD</span>
+  <h1>Toutes les cagnottes</h1>
+  <p class="subtitle">{{pot_count}} cagnotte(s) au total · vue admin</p>
+
+  <section class="section">
+    <h2>Cagnottes</h2>
+    <div class="toolbar">
+      <input type="text" id="search" class="search" placeholder="Filtrer par titre...">
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Titre</th>
+          <th>Montant</th>
+          <th>%</th>
+          <th>Contrib.</th>
+          <th>Owner</th>
+          <th>Statut</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="rows">
+        {{rows}}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="section">
+    <h2>Utilisateurs ({{user_count}})</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Nom</th>
+          <th>Email</th>
+          <th>Rôle</th>
+          <th>Créé</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="user-rows">
+        {{user_rows}}
+      </tbody>
+    </table>
+    <div id="user-feedback" class="feedback"></div>
+  </section>
+
+  <footer>© extragornax · self-hosted</footer>
+</div>
+<script>
+document.getElementById('search').addEventListener('input', function(e){
+  var q = e.target.value.toLowerCase();
+  document.querySelectorAll('#rows tr').forEach(function(tr){
+    var title = (tr.querySelector('.row__title') || {}).textContent || '';
+    tr.style.display = title.toLowerCase().indexOf(q) === -1 ? 'none' : '';
+  });
+});
+
+function adminFetch(method, url) {
+  return fetch(url, {method:method, headers:{'Content-Type':'application/json'}}).then(function(r){
+    if (!r.ok) return r.text().then(function(t){ throw new Error(t) });
+    return r.json();
+  });
+}
+
+function promoteUser(id){
+  if (!confirm('Promouvoir cet utilisateur en admin ?')) return;
+  adminFetch('POST', '/api/users/'+id+'/promote').then(function(){location.reload()}).catch(function(e){alert(e.message)});
+}
+
+function demoteUser(id){
+  if (!confirm('Rétrograder cet utilisateur ?')) return;
+  adminFetch('POST', '/api/users/'+id+'/demote').then(function(){location.reload()}).catch(function(e){alert(e.message)});
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin — {{title}} — Cagnotte</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700;800&family=Fraunces:opsz@9..144&family=Space+Mono&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#F3ECD9;--ink:#0E1424;--ink-soft:#2A2F3E;--mustard:#D9A326;--vermilion:#E54B2A;--teal:#2C6B7E;--rule:rgba(14,20,36,.18)}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--paper);color:var(--ink);font-family:'Fraunces',serif;line-height:1.6;min-height:100vh}
+body::before{content:'';position:fixed;inset:0;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");opacity:.28;pointer-events:none;z-index:9999}
+.wrap{max-width:900px;margin:0 auto;padding:2rem 1.5rem}
+header{border-bottom:2px solid var(--ink);padding-bottom:1rem;margin-bottom:2.5rem;display:flex;justify-content:space-between;align-items:baseline;gap:1rem;flex-wrap:wrap}
+.site-name{font-family:'Bricolage Grotesque',sans-serif;font-weight:800;font-size:1.1rem;letter-spacing:-.02em;text-decoration:none;color:var(--ink)}
+.nav{display:flex;gap:1rem;align-items:center;flex-wrap:wrap;font-family:'Space Mono',monospace;font-size:.8rem}
+.nav__link{color:var(--ink);text-decoration:none}
+.nav__link:hover{text-decoration:underline}
+.nav__link--primary{background:var(--vermilion);color:#fff;padding:.3rem .7rem}
+.nav__user{color:var(--ink-soft)}
+.nav__logout{background:none;border:none;color:var(--ink);font-family:inherit;font-size:inherit;cursor:pointer;text-decoration:underline;padding:0}
+.admin-badge{font-family:'Space Mono',monospace;font-size:.75rem;background:var(--ink);color:var(--paper);padding:.2rem .6rem;letter-spacing:.04em;display:inline-block;margin-bottom:.5rem}
+h1{font-family:'Bricolage Grotesque',sans-serif;font-weight:800;font-size:2rem;letter-spacing:-.03em;line-height:1.1;margin-bottom:.3rem}
+h2{font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:1.2rem;margin-bottom:1rem}
+.organizer{font-family:'Space Mono',monospace;font-size:.85rem;color:var(--ink-soft);margin-bottom:1rem}
+.status{font-family:'Space Mono',monospace;font-size:.85rem;margin-bottom:1.5rem}
+.status__label{font-weight:700}
+.progress{margin-bottom:1.5rem}
+.progress__bar{height:10px;background:var(--rule);border-radius:5px;overflow:hidden}
+.progress__fill{height:100%;border-radius:5px}
+.progress__text{display:flex;justify-content:space-between;margin-top:.3rem;font-family:'Space Mono',monospace;font-size:.85rem}
+.section{border-top:1px solid var(--rule);padding-top:1.5rem;margin-top:1.5rem}
+.actions{display:flex;gap:.8rem;flex-wrap:wrap;margin-bottom:1.5rem}
+.btn{display:inline-block;border:2px solid var(--ink);background:var(--vermilion);color:#fff;padding:.6rem 1.2rem;font-family:'Bricolage Grotesque',sans-serif;font-weight:700;font-size:.9rem;cursor:pointer;transition:transform .1s,box-shadow .1s;text-decoration:none;text-align:center}
+.btn:hover{transform:translateY(-1px);box-shadow:3px 3px 0 var(--ink)}
+.btn:active{transform:translateY(0);box-shadow:none}
+.btn--sm{padding:.3rem .7rem;font-size:.75rem}
+.btn--teal{background:var(--teal)}
+.btn--outline{background:transparent;color:var(--ink)}
+.btn--danger{background:var(--vermilion)}
+.edit-form{display:grid;grid-template-columns:1fr 1fr;gap:.8rem}
+.edit-form .full{grid-column:1/-1}
+.edit-form label{display:block;font-family:'Space Mono',monospace;font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-soft);margin-bottom:.2rem}
+.edit-form input,.edit-form textarea{width:100%;border:1.5px solid var(--ink);background:var(--paper);padding:.5rem .6rem;font-family:'Fraunces',serif;font-size:.9rem;color:var(--ink)}
+.edit-form input:focus,.edit-form textarea:focus{outline:none;border-color:var(--teal)}
+.checkbox-row{display:flex;align-items:center;gap:.5rem;font-family:'Space Mono',monospace;font-size:.8rem}
+.checkbox-row input[type=checkbox]{width:1rem;height:1rem;accent-color:var(--teal)}
+table{width:100%;border-collapse:collapse;font-size:.85rem}
+th{font-family:'Space Mono',monospace;font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;text-align:left;padding:.5rem .4rem;border-bottom:2px solid var(--ink);color:var(--ink-soft)}
+td{padding:.5rem .4rem;border-bottom:1px solid var(--rule);vertical-align:middle}
+.contrib-row.confirmed td{background:rgba(44,107,126,.06)}
+.badge{display:inline-block;background:var(--teal);color:#fff;font-size:.7rem;padding:.1rem .4rem;border-radius:2px}
+.feedback{font-family:'Space Mono',monospace;font-size:.8rem;margin-top:.5rem;min-height:1em}
+.feedback--ok{color:var(--teal)}
+.feedback--err{color:var(--vermilion)}
+.public-link{font-family:'Space Mono',monospace;font-size:.8rem;color:var(--ink-soft)}
+.public-link a{color:var(--teal)}
+footer{border-top:1px solid var(--rule);margin-top:3rem;padding-top:1rem;font-family:'Space Mono',monospace;font-size:.7rem;color:var(--ink-soft);text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a href="/" class="site-name">cagnotte.extragornax.fr</a>
+    {{nav}}
+  </header>
+
+  <span class="admin-badge">ADMIN</span>
+  <h1>{{title}}</h1>
+  <p class="organizer">Organisé par {{organizer}}</p>
+  <p class="public-link">Page publique : <a href="/p/{{pot_slug}}">/p/{{pot_slug}}</a></p>
+  <p class="status"><span class="status__label">Statut :</span> {{closed_label}} · {{contributor_count}} contributeur(s)</p>
+
+  <div class="progress">
+    <div class="progress__bar"><div class="progress__fill" style="width:{{progress_width}}%;background:{{progress_color}}"></div></div>
+    <div class="progress__text">
+      <span>{{current_amount}} / {{goal_amount}}</span>
+      <span>{{percentage}}</span>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button class="btn btn--teal" onclick="toggleClose()">{{close_btn_text}}</button>
+    <a class="btn btn--outline" href="/api/pots/{{pot_id}}/export.csv">Export CSV</a>
+    <button class="btn btn--danger" onclick="deletePot()">Supprimer la cagnotte</button>
+  </div>
+
+  <section class="section">
+    <h2>Modifier la cagnotte</h2>
+    <form id="edit-form" class="edit-form">
+      <div class="full">
+        <label for="e-title">Titre</label>
+        <input type="text" id="e-title" value="{{edit_title}}" required>
+      </div>
+      <div class="full">
+        <label for="e-desc">Description</label>
+        <textarea id="e-desc" rows="3">{{edit_description}}</textarea>
+      </div>
+      <div>
+        <label for="e-goal">Objectif (centimes)</label>
+        <input type="number" id="e-goal" value="{{edit_goal}}" min="1" required>
+      </div>
+      <div>
+        <label for="e-organizer">Organisateur</label>
+        <input type="text" id="e-organizer" value="{{edit_organizer}}">
+      </div>
+      <div class="full">
+        <label for="e-payment">Infos de paiement</label>
+        <textarea id="e-payment" rows="3">{{edit_payment_info}}</textarea>
+      </div>
+      <div>
+        <label for="e-deadline">Deadline</label>
+        <input type="date" id="e-deadline" value="{{edit_deadline}}">
+      </div>
+      <div></div>
+      <div class="checkbox-row"><input type="checkbox" id="e-anon" {{edit_allow_anonymous}}><label for="e-anon">Anonyme autorisé</label></div>
+      <div class="checkbox-row"><input type="checkbox" id="e-amounts" {{edit_show_amounts}}><label for="e-amounts">Montants visibles</label></div>
+      <div class="checkbox-row"><input type="checkbox" id="e-names" {{edit_show_names}}><label for="e-names">Noms visibles</label></div>
+      <div class="full"><button type="submit" class="btn btn--teal">Enregistrer</button></div>
+      <div class="full"><div id="edit-feedback" class="feedback"></div></div>
+    </form>
+  </section>
+
+  <section class="section">
+    <h2>Contributions ({{contributor_count}})</h2>
+    <table>
+      <thead><tr><th>Nom</th><th>Montant</th><th>Message</th><th>Date</th><th>Actions</th></tr></thead>
+      <tbody id="contrib-body">
+        {{contrib_rows}}
+      </tbody>
+    </table>
+    <div id="contrib-feedback" class="feedback"></div>
+  </section>
+
+  <footer>© extragornax · self-hosted</footer>
+</div>
+<script>
+var POT_ID = '{{pot_id}}';
+var hdrs = {'Content-Type':'application/json'};
+
+function api(method, url, body) {
+  return fetch(url, {method:method, headers:hdrs, body:body?JSON.stringify(body):undefined})
+    .then(function(r){
+      if(!r.ok) return r.text().then(function(t){throw new Error(t)});
+      return r.json();
+    });
+}
+
+document.getElementById('edit-form').addEventListener('submit', function(e){
+  e.preventDefault();
+  var fb = document.getElementById('edit-feedback');
+  fb.textContent = '';
+  api('PUT', '/api/pots/'+POT_ID, {
+    title: document.getElementById('e-title').value,
+    description: document.getElementById('e-desc').value,
+    goal_cents: parseInt(document.getElementById('e-goal').value,10),
+    payment_info: document.getElementById('e-payment').value,
+    organizer: document.getElementById('e-organizer').value,
+    deadline: document.getElementById('e-deadline').value || null,
+    allow_anonymous: document.getElementById('e-anon').checked,
+    show_amounts: document.getElementById('e-amounts').checked,
+    show_names: document.getElementById('e-names').checked
+  }).then(function(){
+    fb.textContent = 'Enregistré.';
+    fb.className = 'feedback feedback--ok';
+  }).catch(function(err){
+    fb.textContent = err.message;
+    fb.className = 'feedback feedback--err';
+  });
+});
+
+function confirmContrib(id){
+  api('PUT','/api/contributions/'+id+'/confirm').then(function(){location.reload()})
+  .catch(function(e){alert(e.message)});
+}
+function deleteContrib(id){
+  if(!confirm('Supprimer cette contribution ?')) return;
+  api('DELETE','/api/contributions/'+id).then(function(){
+    var row = document.getElementById('contrib-'+id);
+    if(row) row.remove();
+  }).catch(function(e){alert(e.message)});
+}
+function toggleClose(){
+  api('POST','/api/pots/'+POT_ID+'/close').then(function(){location.reload()})
+  .catch(function(e){alert(e.message)});
+}
+function deletePot(){
+  if(!confirm('Supprimer définitivement cette cagnotte et toutes ses contributions ?')) return;
+  api('DELETE','/api/pots/'+POT_ID).then(function(){location.href='/'})
+  .catch(function(e){alert(e.message)});
+}
+</script>
+</body>
+</html>
