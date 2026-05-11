@@ -66,18 +66,26 @@ footer{border-top:1px solid var(--rule);margin-top:3rem;padding-top:1rem;font-fa
   <footer>© extragornax · self-hosted</footer>
 </div>
 <script>
+function sha256js(ascii){function rightRotate(v,a){return(v>>>a)|(v<<(32-a))}var mathPow=Math.pow,maxWord=mathPow(2,32),lengthProperty='length',i,j,result='';var words=[],asciiBitLength=ascii[lengthProperty]*8;var hash=sha256js.h=sha256js.h||[],k=sha256js.k=sha256js.k||[],primeCounter=k[lengthProperty];var isComposite={};for(var candidate=2;primeCounter<64;candidate++){if(!isComposite[candidate]){for(i=0;i<313;i+=candidate){isComposite[i]=candidate}hash[primeCounter]=(mathPow(candidate,.5)*maxWord)|0;k[primeCounter++]=(mathPow(candidate,1/3)*maxWord)|0}}ascii+='\x80';while(ascii[lengthProperty]%64-56)ascii+='\x00';for(i=0;i<ascii[lengthProperty];i++){j=ascii.charCodeAt(i);if(j>>8)return;words[i>>2]|=j<<((3-i)%4)*8}words[words[lengthProperty]]=((asciiBitLength/maxWord)|0);words[words[lengthProperty]]=(asciiBitLength);for(j=0;j<words[lengthProperty];){var w=words.slice(j,j+=16),oldHash=hash;hash=hash.slice(0,8);for(i=0;i<64;i++){var w15=w[i-15],w2=w[i-2],a=hash[0],e=hash[4],temp1=hash[7]+(rightRotate(e,6)^rightRotate(e,11)^rightRotate(e,25))+((e&hash[5])^((~e)&hash[6]))+k[i]+(w[i]=(i<16)?w[i]:(w[i-16]+(rightRotate(w15,7)^rightRotate(w15,18)^(w15>>>3))+w[i-7]+(rightRotate(w2,17)^rightRotate(w2,19)^(w2>>>10)))|0),temp2=(rightRotate(a,2)^rightRotate(a,13)^rightRotate(a,22))+((a&hash[1])^(a&hash[2])^(hash[1]&hash[2]));hash=[(temp1+temp2)|0].concat(hash);hash[4]=(hash[4]+temp1)|0}for(i=0;i<8;i++){hash[i]=(hash[i]+oldHash[i])|0}}for(i=0;i<8;i++){for(j=3;j+1;j--){var b=(hash[i]>>(j*8))&255;result+=((b<16)?0:'')+b.toString(16)}}return result}
+
+async function sha256hex(text){
+  if (window.crypto && crypto.subtle) {
+    var buf = new TextEncoder().encode(text);
+    var h = await crypto.subtle.digest('SHA-256', buf);
+    var arr = new Uint8Array(h), hex = '';
+    for (var i=0; i<arr.length; i++) hex += arr[i].toString(16).padStart(2,'0');
+    return hex;
+  }
+  return sha256js(text);
+}
+
 async function solveCaptcha(){
   var st = document.getElementById('captcha-status');
   try {
     var r = await fetch('/api/captcha');
     var c = await r.json();
-    var enc = new TextEncoder();
     for (var n = 1; n <= c.maxnumber; n++) {
-      var buf = enc.encode(c.salt + n);
-      var hash = await crypto.subtle.digest('SHA-256', buf);
-      var arr = new Uint8Array(hash);
-      var hex = '';
-      for (var i=0; i<arr.length; i++) hex += arr[i].toString(16).padStart(2,'0');
+      var hex = await sha256hex(c.salt + n);
       if (hex === c.challenge) {
         var payload = btoa(JSON.stringify({algorithm:c.algorithm,challenge:c.challenge,number:n,salt:c.salt,signature:c.signature}));
         st.textContent = '✓ Vérifié';
